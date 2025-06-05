@@ -38,7 +38,28 @@ interface TournamentContextType {
 const TournamentContext = createContext<TournamentContextType | undefined>(undefined)
 
 export const TournamentProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [tournament, setTournament] = useState<Tournament | null>(null)
+  // Load from sessionStorage if present
+  const [tournament, setTournamentState] = useState<Tournament | null>(() => {
+    const saved = sessionStorage.getItem('tournament')
+    return saved ? JSON.parse(saved) : null
+  })
+
+  // Save to sessionStorage on change
+  React.useEffect(() => {
+    if (tournament) {
+      sessionStorage.setItem('tournament', JSON.stringify(tournament))
+    } else {
+      sessionStorage.removeItem('tournament')
+    }
+  }, [tournament])
+
+  // Wrapper to clear sessionStorage when creating a new tournament
+  const setTournament = (t: Tournament | null) => {
+    if (t === null) {
+      sessionStorage.removeItem('tournament')
+    }
+    setTournamentState(t)
+  }
 
   const addParticipant = (participant: Participant) => {
     if (!tournament) return
@@ -135,11 +156,9 @@ export const TournamentProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const generateMatches = () => {
     if (!tournament) return
-
     let matches: Match[] = []
     const participants = [...tournament.participants]
-
-    if (tournament.mode === 'single' || tournament.mode === 'duo') {
+    if (tournament.mode === 'single') {
       const totalRounds = Math.ceil(Math.log2(participants.length))
       for (let i = 0; i < participants.length; i += 2) {
         if (i + 1 < participants.length) {
@@ -154,10 +173,37 @@ export const TournamentProvider: React.FC<{ children: ReactNode }> = ({ children
           })
         }
       }
+    } else if (tournament.mode === 'duo') {
+      // Group participants by team
+      const teamsArr = Object.values(
+        participants.reduce((acc, p) => {
+          if (p.team) {
+            if (!acc[p.team]) acc[p.team] = []
+            acc[p.team].push(p.name)
+          }
+          return acc
+        }, {} as { [teamId: string]: string[] })
+      ).map((names, idx) => ({
+        id: `team-${idx + 1}`,
+        name: names.join(' & ')
+      }))
+      const totalRounds = Math.ceil(Math.log2(teamsArr.length))
+      for (let i = 0; i < teamsArr.length; i += 2) {
+        if (i + 1 < teamsArr.length) {
+          matches.push({
+            id: `match-${tournament.currentRound}-${i / 2}`,
+            round: tournament.currentRound,
+            team1: teamsArr[i],
+            team2: teamsArr[i + 1],
+            score: { team1: 0, team2: 0 },
+            status: 'pending' as const,
+            title: getMatchTitle(tournament.currentRound, totalRounds, i / 2, teamsArr.length / 2)
+          })
+        }
+      }
     } else if (tournament.mode === 'round-robin') {
       matches = generateRoundRobinSchedule(participants)
     }
-
     setTournament({
       ...tournament,
       matches,
@@ -167,7 +213,7 @@ export const TournamentProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const nextRound = () => {
     if (!tournament) return
-    if (tournament.mode === 'single' || tournament.mode === 'duo') {
+    if (tournament.mode === 'single') {
       const currentMatches = tournament.matches.filter((m) => m.round === tournament.currentRound)
       const winners: Participant[] = []
       const losers: Participant[] = []
@@ -256,8 +302,104 @@ export const TournamentProvider: React.FC<{ children: ReactNode }> = ({ children
           status: 'completed'
         })
       }
+    } else if (tournament.mode === 'duo') {
+      // Get all teams
+      const teamMap: { [teamId: string]: { id: string; name: string } } = {}
+      tournament.participants.forEach((p) => {
+        if (p.team) {
+          if (!teamMap[p.team]) teamMap[p.team] = { id: p.team, name: '' }
+          teamMap[p.team].name += (teamMap[p.team].name ? ' & ' : '') + p.name
+        }
+      })
+      const teamsArr = Object.values(teamMap)
+      // Get winners from current round
+      const currentMatches = tournament.matches.filter((m) => m.round === tournament.currentRound)
+      const winners: { id: string; name: string }[] = []
+      const losers: { id: string; name: string }[] = []
+      currentMatches.forEach((match) => {
+        if (match.score.team1 > match.score.team2) {
+          winners.push(match.team1 as any)
+          losers.push(match.team2 as any)
+        } else if (match.score.team2 > match.score.team1) {
+          winners.push(match.team2 as any)
+          losers.push(match.team1 as any)
+        }
+      })
+      // If only 2 winners, it's the final
+      if (winners.length === 2) {
+        const finals = tournament.matches.filter((m) => m.title === 'Final')
+        if (finals.length > 0 && finals.every((m) => m.status === 'completed')) {
+          setTournament({
+            ...tournament,
+            status: 'completed'
+          })
+          return
+        }
+        const finalMatch = {
+          id: `final-${Date.now()}`,
+          round: tournament.currentRound + 1,
+          team1: winners[0],
+          team2: winners[1],
+          score: { team1: 0, team2: 0 },
+          status: 'pending' as const,
+          title: 'Final'
+        }
+        // Bronze match for losers
+        let bronzeMatch = null
+        if (losers.length === 2) {
+          bronzeMatch = {
+            id: `bronze-${Date.now()}`,
+            round: tournament.currentRound + 1,
+            team1: losers[0],
+            team2: losers[1],
+            score: { team1: 0, team2: 0 },
+            status: 'pending' as const,
+            title: 'Bronze Match'
+          }
+        }
+        setTournament({
+          ...tournament,
+          matches: [...tournament.matches, finalMatch, ...(bronzeMatch ? [bronzeMatch] : [])],
+          currentRound: tournament.currentRound + 1
+        })
+      } else if (winners.length > 2) {
+        const finals = tournament.matches.filter((m) => m.title === 'Final')
+        if (finals.length > 0 && finals.every((m) => m.status === 'completed')) {
+          setTournament({
+            ...tournament,
+            status: 'completed'
+          })
+          return
+        }
+        const totalRounds = Math.ceil(Math.log2(teamsArr.length))
+        const nextMatches = []
+        for (let i = 0; i < winners.length; i += 2) {
+          if (i + 1 < winners.length) {
+            nextMatches.push({
+              id: `match-${tournament.currentRound + 1}-${i / 2}`,
+              round: tournament.currentRound + 1,
+              team1: winners[i],
+              team2: winners[i + 1],
+              score: { team1: 0, team2: 0 },
+              status: 'pending' as const,
+              title: getMatchTitle(tournament.currentRound + 1, totalRounds, i / 2, winners.length / 2)
+            })
+          }
+        }
+        setTournament({
+          ...tournament,
+          matches: [...tournament.matches, ...nextMatches],
+          currentRound: tournament.currentRound + 1
+        })
+      } else {
+        setTournament({
+          ...tournament,
+          status: 'completed'
+        })
+      }
+    } else if (tournament.mode === 'round-robin') {
+      // do nothing
     }
-    // For round robin, do nothing (all matches are generated at once)
   }
 
   return <TournamentContext.Provider value={{ tournament, setTournament, addParticipant, updateMatchScore, generateMatches, nextRound }}>{children}</TournamentContext.Provider>
