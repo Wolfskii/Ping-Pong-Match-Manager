@@ -1,6 +1,6 @@
 # Ping Pong Match Manager
 
-![Funny Table Tennis](https://media.giphy.com/media/3o7TKz2eMXx7dn95FS/giphy.gif)
+![Funny Table Tennis](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXJiOHZxOGdhYXRzdzczYTRhM2gxdTY4NHViOXdwM2s1MGFocm50dCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l2YWpodB2fO6WL0Q0/giphy.gif)
 
 ## Overview
 
